@@ -1,12 +1,13 @@
 import os
-from dotenv import load_dotenv
+from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
 
 # 1. New home for HuggingFace logic
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # 2. Legacy home for the "Chains" and Hub
 from langchain_classic.chains import RetrievalQA
-from langchain_community.llms import HuggingFaceHub
+from langchain_huggingface import HuggingFaceEndpoint
 
 # 3. Community home for FAISS
 from langchain_community.vectorstores import FAISS
@@ -15,7 +16,10 @@ from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Load environment variables (for the HuggingFace API Token)
-load_dotenv()
+# This finds the directory of the current file (__init__.py)
+# and looks for the .env file one level up (in the backend/ folder)
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 # 1. Setup Configuration
 # "all-MiniLM-L6-v2" turns text into 384-dimensional vectors
@@ -61,12 +65,17 @@ def answer_question(query: str) -> str:
         embeddings_model, 
         allow_dangerous_deserialization=True
     )
-    
+
+    hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+
     # 2. Setup the LLM (Large Language Model)
     # google/flan-t5-base is a good lightweight model for RAG
-    llm = HuggingFaceHub(
-        repo_id="google/flan-t5-base", 
-        model_kwargs={"temperature": 0.1, "max_length": 512}
+    llm = HuggingFaceEndpoint(
+        repo_id="google/flan-t5-base",
+        huggingfacehub_api_token=hf_token,
+        task="text2text-generation",
+        max_new_tokens=512,
+        temperature=0.1,
     )
 
     # 3. Create the RetrievalQA chain
@@ -74,8 +83,9 @@ def answer_question(query: str) -> str:
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm, 
         chain_type="stuff", 
-        retriever=db.as_retriever(search_kwargs={"k": 3})
+        retriever=db.as_retriever()
     )
     
     # 4. Run the query
-    return qa_chain.invoke(query)["result"]
+    response = qa_chain.invoke(query)
+    return response["result"]
