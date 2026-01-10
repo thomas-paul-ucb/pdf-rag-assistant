@@ -2,9 +2,13 @@
 
 from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from rag_engine import chunk_text, embed_and_store, answer_question
+
+router = APIRouter()
 import fitz  # PyMuPDF
 
-from rag_engine import chunk_text, embed_and_store
+from rag_engine import chunk_text, embed_and_store, answer_question
 
 router = APIRouter()
 
@@ -23,3 +27,14 @@ async def upload_pdf(file: UploadFile = File(...)):
     
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+class Question(BaseModel):
+    query: str
+
+@router.post("/ask")
+def ask_question(body: Question):
+    try:
+        answer = answer_question(body.query)
+        return {"question": body.query, "answer": answer}
+    except Exception as e:
+        return {"error": str(e)}

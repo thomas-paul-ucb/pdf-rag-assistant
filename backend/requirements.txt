@@ -5,3 +5,7 @@ python-multipart
 PyMuPDF
 sentence-transformers
 faiss-cpu
+langchain-community
+langchain
+langchain-huggingface
+langchain-classic
