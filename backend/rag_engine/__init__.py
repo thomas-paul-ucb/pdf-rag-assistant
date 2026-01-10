@@ -1,39 +1,30 @@
 import os
+import traceback
+import requests
 from pathlib import Path
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv
 
-# 1. New home for HuggingFace logic
+# Hugging Face Official Client
+from huggingface_hub import InferenceClient
+
+# LangChain / Vector Store Imports
 from langchain_huggingface import HuggingFaceEmbeddings
-
-# 2. Legacy home for the "Chains" and Hub
-from langchain_classic.chains import RetrievalQA
-from langchain_huggingface import HuggingFaceEndpoint
-
-# 3. Community home for FAISS
 from langchain_community.vectorstores import FAISS
-
-# 4. Standard text splitting
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Load environment variables (for the HuggingFace API Token)
-# This finds the directory of the current file (__init__.py)
-# and looks for the .env file one level up (in the backend/ folder)
-env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
+# --- PATH LOGIC ---
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
-# 1. Setup Configuration
-# "all-MiniLM-L6-v2" turns text into 384-dimensional vectors
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-DB_PATH = "faiss_index"
+HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+DB_PATH = str(BASE_DIR / "backend" / "faiss_index")
+embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-# Initialize the embedding model globally for efficiency
-embeddings_model = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+# --- THE MISSING FUNCTIONS ---
+# You must have all three of these defined here for api.py to work:
 
 def chunk_text(text: str):
-    """
-    Breaks long text into smaller pieces so the AI can process them.
-    RecursiveCharacterTextSplitter tries to split at paragraphs and sentences.
-    """
+    """Breaks long text into smaller pieces."""
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=500, 
         chunk_overlap=50
@@ -41,51 +32,57 @@ def chunk_text(text: str):
     return text_splitter.split_text(text)
 
 def embed_and_store(chunks: list):
-    """
-    Turns text chunks into vectors and saves them to a local folder.
-    """
-    # Create the vector database from the text chunks
+    """Turns text chunks into vectors and saves locally."""
     vectorstore = FAISS.from_texts(chunks, embeddings_model)
-    
-    # Save the database locally to the 'faiss_index' folder
     vectorstore.save_local(DB_PATH)
 
 def answer_question(query: str) -> str:
-    """
-    Retrieves relevant chunks and asks the LLM to answer based on them.
-    """
-    # Check if the database exists
     if not os.path.exists(DB_PATH):
-        return "Error: No PDF has been processed yet. Please upload a PDF first."
+        return "Error: Please upload a PDF first."
 
-    # 1. Load the stored vector database
-    # allow_dangerous_deserialization is required for loading local pickle files
-    db = FAISS.load_local(
-        DB_PATH, 
-        embeddings_model, 
-        allow_dangerous_deserialization=True
-    )
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    model = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
-    hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    try:
+        # 1. RETRIEVE context from vector store
+        db = FAISS.load_local(DB_PATH, embeddings_model, allow_dangerous_deserialization=True)
+        docs = db.similarity_search(query, k=3)
+        context = "\n".join([doc.page_content for doc in docs])
 
-    # 2. Setup the LLM (Large Language Model)
-    # google/flan-t5-base is a good lightweight model for RAG
-    llm = HuggingFaceEndpoint(
-        repo_id="google/flan-t5-base",
-        huggingfacehub_api_token=hf_token,
-        task="text2text-generation",
-        max_new_tokens=512,
-        temperature=0.1,
-    )
+        # 2. CONSTRUCT PROMPT
+        prompt = f"""Based on the following context, answer the question concisely.
 
-    # 3. Create the RetrievalQA chain
-    # "stuff" chain type simply 'stuffs' all retrieved context into the prompt
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm, 
-        chain_type="stuff", 
-        retriever=db.as_retriever()
-    )
-    
-    # 4. Run the query
-    response = qa_chain.invoke(query)
-    return response["result"]
+Context:
+{context}
+
+Question: {query}
+
+Answer:"""
+
+        # 3. GENERATE using Ollama
+        response = requests.post(
+            f"{ollama_url}/api/generate",
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": 250
+                }
+            },
+            timeout=120
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            return result.get("response", "No response generated")
+        else:
+            return f"Ollama Error ({response.status_code}): {response.text}"
+
+    except requests.exceptions.ConnectionError:
+        return "Error: Ollama is not running. Start it with 'ollama serve' or check if it's installed."
+    except Exception as e:
+        traceback.print_exc()
+        return f"System Error: {str(e)}"
+
