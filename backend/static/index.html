@@ -1,65 +1,148 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>PDF Chat Assistant</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF AI Assistant</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .message { margin: 10px; padding: 10px; border-radius: 8px; max-width: 80%; }
-        .user { background: #dcf8c6; margin-left: auto; }
-        .bot { background: #f1f0f0; }
+        /* Modern Scrollbar */
+        #chat::-webkit-scrollbar { width: 6px; }
+        #chat::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
+
+        /* Chat Bubbles */
+        .message { margin-bottom: 1rem; padding: 0.75rem 1rem; border-radius: 12px; max-width: 80%; line-height: 1.5; }
+        .user { background-color: #2563eb; color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
+        .bot { background-color: #f1f5f9; color: #1e293b; align-self: flex-start; border-bottom-left-radius: 2px; }
+
+        /* Spinner Animation */
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(59, 130, 246, 0.2);
+            border-radius: 50%;
+            border-top-color: #3b82f6;
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .typing-indicator { display: flex; align-items: center; font-style: italic; color: #64748b; }
     </style>
 </head>
-<body class="bg-gray-100 h-screen flex flex-col">
-    <div class="bg-blue-600 p-4 text-white font-bold flex justify-between">
-        <span>PDF AI Assistant</span>
-        <input type="file" id="pdfInput" onchange="uploadFile()" class="text-sm">
-    </div>
+<body class="bg-slate-50 h-screen flex flex-col font-sans">
 
-    <div id="chat" class="flex-1 overflow-y-auto p-4 space-y-4">
-        <div class="message bot">Hello! Upload a PDF to start.</div>
-    </div>
+    <header class="bg-white border-b border-slate-200 p-4 shadow-sm flex justify-between items-center">
+        <div class="flex items-center gap-2">
+            <span class="text-2xl">📚</span>
+            <h1 class="text-xl font-bold text-slate-800">PDF RAG Assistant</h1>
+        </div>
+        <div class="flex items-center gap-4">
+            <input type="file" id="pdfInput" onchange="uploadFile()" class="hidden">
+            <label for="pdfInput" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg cursor-pointer transition text-sm font-medium">
+                Upload PDF
+            </label>
+            <span id="status" class="text-xs text-slate-500 font-mono uppercase tracking-wider">Ready</span>
+        </div>
+    </header>
 
-    <div class="p-4 bg-white flex gap-2">
-        <input id="queryInput" type="text" class="flex-1 border p-2 rounded" placeholder="Type a message...">
-        <button onclick="sendQuery()" class="bg-blue-600 text-white px-4 py-2 rounded">Send</button>
-    </div>
+    <main id="chat" class="flex-1 overflow-y-auto p-6 flex flex-col space-y-2">
+        <div class="message bot shadow-sm">
+            Hello! I'm your local AI. Please upload a PDF, and I'll help you analyze it using Ollama.
+        </div>
+    </main>
+
+    <footer class="p-4 bg-white border-t border-slate-200">
+        <div class="max-w-4xl mx-auto flex gap-3">
+            <input id="queryInput" type="text" 
+                   class="flex-1 border border-slate-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 transition" 
+                   placeholder="Ask something about your document...">
+            <button onclick="sendQuery()" 
+                    class="bg-slate-800 hover:bg-slate-900 text-white px-6 py-3 rounded-xl transition font-medium shadow-md">
+                Send
+            </button>
+        </div>
+    </footer>
 
     <script>
+        const chatContainer = document.getElementById('chat');
+        const statusText = document.getElementById('status');
+        const queryInput = document.getElementById('queryInput');
+
+        // Helper to add messages to the UI
+        function addMessage(role, text) {
+            const div = document.createElement('div');
+            div.className = `message ${role} shadow-sm`;
+            div.innerText = text;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return div;
+        }
+
+        // Handle PDF Uploads
         async function uploadFile() {
-            const file = document.getElementById('pdfInput').files[0];
+            const fileInput = document.getElementById('pdfInput');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            statusText.innerText = "Indexing...";
+            addMessage('bot', `Uploading "${file.name}"... one moment.`);
+
             const formData = new FormData();
             formData.append('file', file);
 
-            addMessage('bot', 'Processing PDF...');
-            const res = await fetch('/upload-pdf', { method: 'POST', body: formData });
-            const data = await res.json();
-            addMessage('bot', data.message || 'Done!');
+            try {
+                const res = await fetch('/upload-pdf', { method: 'POST', body: formData });
+                const data = await res.json();
+                statusText.innerText = "Document Loaded";
+                addMessage('bot', 'Processing complete! I have indexed the document. You can now ask questions.');
+            } catch (err) {
+                statusText.innerText = "Error";
+                addMessage('bot', 'Failed to upload PDF. Please check if the backend is running.');
+            }
         }
 
+        // Handle AI Queries
         async function sendQuery() {
-            const input = document.getElementById('queryInput');
-            const text = input.value;
+            const text = queryInput.value.trim();
             if (!text) return;
 
+            // 1. Show user message
             addMessage('user', text);
-            input.value = '';
+            queryInput.value = '';
 
-            // This matches your Question(BaseModel) with "query" field
-            const res = await fetch('/ask', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: text }) 
-            });
-            const data = await res.json();
-            addMessage('bot', data.answer || data.error);
+            // 2. Show "Thinking" indicator
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message bot typing-indicator shadow-sm';
+            loadingDiv.innerHTML = '<div class="spinner"></div> Ollama is thinking...';
+            chatContainer.appendChild(loadingDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            try {
+                const res = await fetch('/ask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: text }) 
+                });
+                const data = await res.json();
+                
+                // 3. Swap indicator for the real response
+                chatContainer.removeChild(loadingDiv);
+                addMessage('bot', data.answer || data.error || "Sorry, I couldn't generate an answer.");
+            } catch (err) {
+                chatContainer.removeChild(loadingDiv);
+                addMessage('bot', 'Error: Backend server is unreachable.');
+            }
         }
 
-        function addMessage(role, text) {
-            const div = document.createElement('div');
-            div.className = `message ${role}`;
-            div.innerText = text;
-            document.getElementById('chat').appendChild(div);
-        }
+        // Allow pressing 'Enter' to send
+        queryInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendQuery();
+        });
     </script>
 </body>
 </html>
