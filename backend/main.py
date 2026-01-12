@@ -1,6 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from api import api  # This is your router file
+from fastapi.staticfiles import StaticFiles  # Add this
+from fastapi.responses import FileResponse    # Add this
+import shutil
+import os
 
 app = FastAPI()
 
@@ -14,6 +18,10 @@ app.add_middleware(
 
 app.include_router(api.router)
 
+# --- MOUNT STATIC FILES ---
+# This serves everything in the 'static' folder at the root URL
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 @app.get("/")
-def root():
-    return {"message": "PDF AI Q&A is running"}
+async def serve_frontend():
+    return FileResponse("static/index.html")
